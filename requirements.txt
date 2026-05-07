@@ -1,84 +1,30 @@
-# ============================================================================
-# Kolrose Limited RAG System - Requirements
-# Suite 10, Bataiya Plaza, Area 2 Garki, Opposite FCDA, Abuja, FCT, Nigeria
-# ============================================================================
-# Optimized for free-tier deployment on Render/Railway
-# Python 3.10+ required
-# ============================================================================
-
-# ----------------------------------------------------------------------------
-# Web Framework & Server
-# ----------------------------------------------------------------------------
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-starlette==0.36.3
-python-multipart==0.0.6
-
-# ----------------------------------------------------------------------------
-# Data Validation & Settings
-# ----------------------------------------------------------------------------
-pydantic==2.6.1
-pydantic-settings==2.1.0
-python-dotenv==1.0.1
-
-# ----------------------------------------------------------------------------
-# LLM & AI Framework (Free Tier: OpenRouter)
-# ----------------------------------------------------------------------------
-langchain==0.1.9
-langchain-community==0.0.24
-langchain-core==0.1.27
-langchain-text-splitters==0.0.1
-openai==1.12.0                     # Compatible with OpenRouter API
-
-# ----------------------------------------------------------------------------
-# Local Embeddings (FREE - No API costs)
-# ----------------------------------------------------------------------------
-sentence-transformers==2.3.1       # Local embedding model
-torch>=2.0.0                       # Required by sentence-transformers
-# Model used: all-MiniLM-L6-v2 (80MB, runs locally on CPU)
-
-# ----------------------------------------------------------------------------
-# Vector Database (FREE - Local persistence)
-# ----------------------------------------------------------------------------
-chromadb==0.4.22                   # Persistent local vector store
-sqlite3                            # Built-in Python (ChromaDB dependency)
-
-# ----------------------------------------------------------------------------
-# Document Processing
-# ----------------------------------------------------------------------------
-markdown==3.5.2
-beautifulsoup4==4.12.3
-lxml==5.1.0                        # Fast XML/HTML parser
-
-# ----------------------------------------------------------------------------
-# HTTP & Async
-# ----------------------------------------------------------------------------
-httpx==0.27.0                      # Async HTTP client
-aiohttp==3.9.3                     # Alternative async HTTP
-requests==2.31.0                   # Synchronous HTTP (backup)
-
-# ----------------------------------------------------------------------------
-# Data Processing
-# ----------------------------------------------------------------------------
-numpy==1.26.4
-pandas==2.2.0
-scikit-learn==1.4.0                # For evaluation metrics
-
-# ----------------------------------------------------------------------------
-# Logging & Monitoring
-# ----------------------------------------------------------------------------
-structlog==24.1.0
-python-json-logger==2.0.7
-
-# ----------------------------------------------------------------------------
-# Utilities
-# ----------------------------------------------------------------------------
-tqdm==4.66.1                       # Progress bars
-click==8.1.7                       # CLI tools
-pyyaml==6.0.1                     # YAML parsing
-tenacity==8.2.3                    # Retry logic for API calls
-
-# ----------------------------------------------------------------------------
-# CORS & Security
-# ----------------------------------------------------------------------------
-# Included with FastAPI/Starlette
+cat > requirements.txt << 'EOF'
+streamlit>=1.28.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+starlette>=0.36.0
+python-multipart>=0.0.6
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langchain-text-splitters>=0.0.1
+langchain-openai>=0.0.5
+openai>=1.12.0
+sentence-transformers>=2.3.0
+torch>=2.0.0
+chromadb>=0.4.22
+markdown>=3.5.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+httpx>=0.27.0
+numpy>=1.26.0
+pandas>=2.2.0
+tqdm>=4.66.0
+pyyaml>=6.0.0
+tenacity>=8.2.0
+structlog>=24.0.0
+requests>=2.31.0
+EOF
