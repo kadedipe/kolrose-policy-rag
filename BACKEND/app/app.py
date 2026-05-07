@@ -68,29 +68,67 @@ def load_vectorstore():
     import shutil
     
     chroma_path = os.environ.get('CHROMA_PATH', './chroma_db')
+    policies_path = os.environ.get('POLICIES_PATH', './policies')
     
-    # Check if chroma_db exists and is compatible
+    # Try loading existing
     try:
         from langchain_community.vectorstores import Chroma
-        
         return Chroma(
             persist_directory=chroma_path,
             embedding_function=load_embeddings(),
             collection_name="kolrose_policies_v2",
         )
-    except Exception as e:
-        # If loading fails, remove old DB and rebuild
-        st.warning(f"Rebuilding vector store...")
-        if os.path.exists(chroma_path):
-            shutil.rmtree(chroma_path)
-        
-        # Auto-ingest
-        from app.ingestion import ingest_policies
-        vectorstore, stats = ingest_policies(
-            policies_path=os.environ.get('POLICIES_PATH', './DATA/policies'),
-            chroma_path=chroma_path,
-        )
-        return vectorstore
+    except Exception:
+        pass  # Doesn't exist yet
+    
+    # Auto-ingest using the LOCAL function (not app.ingestion)
+    st.warning("📥 First run: Indexing policy documents (this may take a minute)...")
+    
+    if not os.path.exists(policies_path):
+        return None
+    
+    all_files = []
+    for root, dirs, files in os.walk(policies_path):
+        for f in sorted(files):
+            if f.endswith('.md') and f != 'README.md':
+                all_files.append(os.path.join(root, f))
+    
+    if not all_files:
+        return None
+    
+    from langchain_community.document_loaders import TextLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import Chroma
+    
+    documents = []
+    for filepath in all_files:
+        loader = TextLoader(filepath, encoding='utf-8')
+        docs = loader.load()
+        for doc in docs:
+            doc.metadata['source_file'] = os.path.basename(filepath)
+        documents.extend(docs)
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500, chunk_overlap=100,
+        separators=["\n\n", "\n", ". ", "! ", "? ", " "],
+    )
+    chunks = text_splitter.split_documents(documents)
+    
+    for i, chunk in enumerate(chunks):
+        chunk.metadata['chunk_id'] = f"chunk_{i:05d}"
+        match = re.search(r'\*\*Document ID:\*\*\s*(KOL-\w+-\d+)', chunk.page_content)
+        if match:
+            chunk.metadata['document_id'] = match.group(1)
+    
+    embeddings = load_embeddings()
+    vectorstore = Chroma.from_documents(
+        chunks, embeddings,
+        persist_directory=chroma_path,
+        collection_name="kolrose_policies_v2",
+    )
+    
+    st.success(f"✅ Indexed {len(chunks)} chunks from {len(all_files)} documents!")
+    return vectorstore
 
 @st.cache_resource(show_spinner=False)
 def load_llm():
