@@ -47,7 +47,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
 COLLECTION_NAME = "kolrose_policies_v2"
-POLICIES_PATH = os.environ.get("POLICIES_PATH", "./policies")
+POLICIES_PATH = os.environ.get("POLICIES_PATH", "./DATA/policies")
 
 # ============================================================================
 # LAZY LOADING - Initialize heavy components only when needed
