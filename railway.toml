@@ -1,0 +1,7 @@
+# railway.toml - Place in repository root
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "streamlit run BACKEND/app/app.py --server.port=$PORT --server.address=0.0.0.0"
+rootDirectory = "/"
