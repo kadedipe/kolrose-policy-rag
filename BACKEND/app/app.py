@@ -21,17 +21,6 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 
-# DEBUG: Show what files are available
-import os
-st.write("Current directory:", os.getcwd())
-st.write("Files in current dir:", os.listdir("."))
-if os.path.exists("./policies"):
-    st.write("Policies folder:", os.listdir("./policies"))
-elif os.path.exists("./DATA/policies"):
-    st.write("DATA/policies folder:", os.listdir("./DATA/policies"))
-else:
-    st.write("No policies folder found!")
-
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
@@ -58,7 +47,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
 COLLECTION_NAME = "kolrose_policies_v2"
-POLICIES_PATH = os.environ.get("POLICIES_PATH", "./DATA/policies")
+POLICIES_PATH = os.environ.get("POLICIES_PATH", "./policies")
 
 # ============================================================================
 # LAZY LOADING - Initialize heavy components only when needed
@@ -79,21 +68,33 @@ def load_vectorstore():
     import shutil
     
     chroma_path = os.environ.get('CHROMA_PATH', './chroma_db')
-    policies_path = os.environ.get('POLICIES_PATH', './policies')
+    policies_path = os.environ.get('POLICIES_PATH', POLICIES_PATH)
+    
+    # Force reset if needed
+    if os.environ.get('RESET_CHROMA') == 'true':
+        if os.path.exists(chroma_path):
+            shutil.rmtree(chroma_path)
+            st.warning("🔄 Resetting vector database...")
     
     # Try loading existing
     try:
         from langchain_community.vectorstores import Chroma
-        return Chroma(
+        vs = Chroma(
             persist_directory=chroma_path,
             embedding_function=load_embeddings(),
             collection_name="kolrose_policies_v2",
         )
+        count = vs._collection.count()
+        if count > 0:
+            return vs
+        else:
+            st.warning("Vector store empty, rebuilding...")
+            shutil.rmtree(chroma_path)
     except Exception:
-        pass  # Doesn't exist yet
+        pass
     
-    # Auto-ingest using the LOCAL function (not app.ingestion)
-    st.warning("📥 First run: Indexing policy documents (this may take a minute)...")
+    # Auto-ingest
+    st.warning("📥 Indexing policy documents (this may take a minute)...")
     
     if not os.path.exists(policies_path):
         return None
