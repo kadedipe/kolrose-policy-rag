@@ -2,6 +2,10 @@
 [build]
 builder = "nixpacks"
 
+[variables]
+HF_HUB_ENABLE_HF_TRANSFER = "1"
+SENTENCE_TRANSFORMERS_HOME = "/tmp/.cache"
+
 [deploy]
-startCommand = "streamlit run BACKEND/app/app.py --server.port=$PORT --server.address=0.0.0.0"
 rootDirectory = "/"
+startCommand = "streamlit run BACKEND/app/app.py --server.port=$PORT --server.address=0.0.0.0 --server.enableCORS=false --server.enableXsrfProtection=false"
