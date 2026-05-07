@@ -16,6 +16,8 @@ import sys
 import hashlib
 import time
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
@@ -41,13 +43,59 @@ try:
 except ImportError:
     pass
 
+# Determine the best writable path for ChromaDB
+def get_chroma_path():
+    """Get a writable path for ChromaDB based on environment"""
+    env_path = os.environ.get("CHROMA_PATH", "")
+    
+    # If explicitly set in environment, use it
+    if env_path and env_path != "./chroma_db":
+        return env_path
+    
+    # On Streamlit Cloud, use temp directory
+    if os.environ.get('STREAMLIT_SHARING_MODE') or os.environ.get('STREAMLIT_SERVER_ADDRESS'):
+        base = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
+    else:
+        base = "./chroma_db"
+    
+    # Ensure parent directory exists and is writable
+    parent = os.path.dirname(base) or '.'
+    if os.path.exists(parent) and not os.access(parent, os.W_OK):
+        base = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
+    
+    return base
+
 # Configuration with defaults for local/cloud deployment
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
-CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
+CHROMA_PATH = get_chroma_path()
 COLLECTION_NAME = "kolrose_policies_v2"
 POLICIES_PATH = os.environ.get("POLICIES_PATH", "./policies")
+
+def check_environment():
+    """Check environment and return status"""
+    status = {
+        "streamlit_cloud": bool(os.environ.get('STREAMLIT_SHARING_MODE') or os.environ.get('STREAMLIT_SERVER_ADDRESS')),
+        "writable_temp": True,
+        "chroma_path": CHROMA_PATH,
+        "policies_exist": os.path.exists(POLICIES_PATH),
+    }
+    
+    # Test writability
+    try:
+        test_path = os.path.join(tempfile.gettempdir(), '.streamlit_test')
+        with open(test_path, 'w') as f:
+            f.write('test')
+        os.remove(test_path)
+    except:
+        status["writable_temp"] = False
+    
+    # Suggest chroma path
+    if status["streamlit_cloud"]:
+        status["suggested_chroma_path"] = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
+    
+    return status
 
 # ============================================================================
 # LAZY LOADING - Initialize heavy components only when needed
@@ -62,41 +110,71 @@ def load_embeddings():
         encode_kwargs={'normalize_embeddings': True, 'batch_size': 16},
     )
 
-@st.cache_resource(show_spinner=False)
-def load_vectorstore():
-    """Load or create vector store"""
-    import shutil
-    
-    chroma_path = os.environ.get('CHROMA_PATH', './chroma_db')
-    policies_path = os.environ.get('POLICIES_PATH', POLICIES_PATH)
-    
-    # Force reset if needed
-    if os.environ.get('RESET_CHROMA') == 'true':
-        if os.path.exists(chroma_path):
-            shutil.rmtree(chroma_path)
-            st.warning("🔄 Resetting vector database...")
-    
-    # Try loading existing
+def ensure_writable_path(path):
+    """Ensure a path is writable, return a writable alternative if not"""
+    # Create directory if it doesn't exist
     try:
-        from langchain_community.vectorstores import Chroma
-        vs = Chroma(
-            persist_directory=chroma_path,
-            embedding_function=load_embeddings(),
-            collection_name="kolrose_policies_v2",
-        )
-        count = vs._collection.count()
-        if count > 0:
-            return vs
-        else:
-            st.warning("Vector store empty, rebuilding...")
-            shutil.rmtree(chroma_path)
-    except Exception:
+        os.makedirs(path, exist_ok=True)
+    except:
         pass
     
-    # Auto-ingest
-    st.warning("📥 Indexing policy documents (this may take a minute)...")
+    # Test if writable
+    try:
+        test_file = os.path.join(path, ".write_test")
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        return path, True
+    except (IOError, OSError, PermissionError):
+        # Not writable, use temp directory
+        new_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
+        os.makedirs(new_path, exist_ok=True)
+        return new_path, False
+
+@st.cache_resource(show_spinner=False)
+def load_vectorstore():
+    """Load or create vector store with Streamlit Cloud compatibility"""
+    chroma_path = get_chroma_path()
+    policies_path = os.environ.get('POLICIES_PATH', POLICIES_PATH)
     
+    # Handle reset flag
+    if os.environ.get('RESET_CHROMA') == 'true':
+        try:
+            if os.path.exists(chroma_path):
+                shutil.rmtree(chroma_path, ignore_errors=True)
+            # Also clean temp chroma dirs
+            for item in os.listdir(tempfile.gettempdir()):
+                if item.startswith('kolrose_chroma_db'):
+                    shutil.rmtree(os.path.join(tempfile.gettempdir(), item), ignore_errors=True)
+        except:
+            pass
+        st.cache_resource.clear()
+    
+    # Try to load existing database
+    if os.path.exists(chroma_path) and os.path.isdir(chroma_path):
+        try:
+            # Verify it's writable before loading
+            chroma_path, is_writable = ensure_writable_path(chroma_path)
+            
+            from langchain_community.vectorstores import Chroma
+            vs = Chroma(
+                persist_directory=chroma_path,
+                embedding_function=load_embeddings(),
+                collection_name=COLLECTION_NAME,
+            )
+            count = vs._collection.count()
+            if count > 0:
+                return vs
+        except Exception as e:
+            # Database corrupted or locked, rebuild
+            try:
+                shutil.rmtree(chroma_path, ignore_errors=True)
+            except:
+                pass
+    
+    # Build new database
     if not os.path.exists(policies_path):
+        st.warning(f"Policies directory not found: {policies_path}")
         return None
     
     all_files = []
@@ -106,7 +184,10 @@ def load_vectorstore():
                 all_files.append(os.path.join(root, f))
     
     if not all_files:
+        st.warning("No policy markdown files found")
         return None
+    
+    st.info(f"📥 Indexing {len(all_files)} policy documents (this may take a minute)...")
     
     from langchain_community.document_loaders import TextLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -114,11 +195,17 @@ def load_vectorstore():
     
     documents = []
     for filepath in all_files:
-        loader = TextLoader(filepath, encoding='utf-8')
-        docs = loader.load()
-        for doc in docs:
-            doc.metadata['source_file'] = os.path.basename(filepath)
-        documents.extend(docs)
+        try:
+            loader = TextLoader(filepath, encoding='utf-8')
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata['source_file'] = os.path.basename(filepath)
+            documents.extend(docs)
+        except Exception as e:
+            st.warning(f"Could not load {os.path.basename(filepath)}: {str(e)[:100]}")
+    
+    if not documents:
+        return None
     
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500, chunk_overlap=100,
@@ -133,14 +220,43 @@ def load_vectorstore():
             chunk.metadata['document_id'] = match.group(1)
     
     embeddings = load_embeddings()
-    vectorstore = Chroma.from_documents(
-        chunks, embeddings,
-        persist_directory=chroma_path,
-        collection_name="kolrose_policies_v2",
-    )
     
-    st.success(f"✅ Indexed {len(chunks)} chunks from {len(all_files)} documents!")
-    return vectorstore
+    # Create with retry logic for readonly errors
+    for attempt in range(5):
+        try:
+            # Ensure clean writable directory
+            if attempt == 0:
+                chroma_path, _ = ensure_writable_path(chroma_path)
+            else:
+                # Use fresh temp directory on retry
+                chroma_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
+            
+            # Remove existing if present
+            if os.path.exists(chroma_path):
+                shutil.rmtree(chroma_path, ignore_errors=True)
+            
+            os.makedirs(chroma_path, exist_ok=True)
+            
+            vectorstore = Chroma.from_documents(
+                chunks, embeddings,
+                persist_directory=chroma_path,
+                collection_name=COLLECTION_NAME,
+            )
+            st.success(f"✅ Indexed {len(chunks)} chunks from {len(all_files)} documents!")
+            return vectorstore
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "readonly" in error_msg or "read only" in error_msg:
+                # Force temp directory next attempt
+                chroma_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
+            elif attempt < 4:
+                st.warning(f"Attempt {attempt + 1} failed, retrying...")
+            else:
+                st.error(f"Failed to create vector store after {attempt + 1} attempts: {str(e)[:200]}")
+                return None
+    
+    return None
 
 @st.cache_resource(show_spinner=False)
 def load_llm():
@@ -382,62 +498,6 @@ Answer:"""
 
 
 # ============================================================================
-# INGESTION FUNCTION (Run once to index policies)
-# ============================================================================
-def ingest_policies(policies_path: str, chroma_path: str):
-    """Ingest policy documents into ChromaDB"""
-    from langchain_community.document_loaders import TextLoader
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_community.vectorstores import Chroma
-    
-    # Find all markdown files
-    all_files = []
-    for root, dirs, files in os.walk(policies_path):
-        for f in sorted(files):
-            if f.endswith('.md') and f != 'README.md':
-                all_files.append(os.path.join(root, f))
-    
-    if not all_files:
-        return None, f"No markdown files found in {policies_path}"
-    
-    # Load and chunk
-    documents = []
-    for filepath in all_files:
-        loader = TextLoader(filepath, encoding='utf-8')
-        docs = loader.load()
-        for doc in docs:
-            doc.metadata['source_file'] = os.path.basename(filepath)
-        documents.extend(docs)
-    
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500, chunk_overlap=100,
-        separators=["\n\n", "\n", ". ", "! ", "? ", " "],
-    )
-    chunks = text_splitter.split_documents(documents)
-    
-    # Add metadata
-    for i, chunk in enumerate(chunks):
-        chunk.metadata['chunk_id'] = f"chunk_{i:05d}"
-        # Try to extract document ID from content
-        match = re.search(r'\*\*Document ID:\*\*\s*(KOL-\w+-\d+)', chunk.page_content)
-        if match:
-            chunk.metadata['document_id'] = match.group(1)
-        match = re.search(r'^#\s+Kolrose Limited\s*-\s*(.+?)$', chunk.page_content, re.MULTILINE)
-        if match:
-            chunk.metadata['policy_name'] = match.group(1).strip()
-    
-    # Index
-    embeddings = load_embeddings()
-    vectorstore = Chroma.from_documents(
-        chunks, embeddings,
-        persist_directory=chroma_path,
-        collection_name=COLLECTION_NAME,
-    )
-    
-    return vectorstore, f"Indexed {len(chunks)} chunks from {len(all_files)} documents"
-
-
-# ============================================================================
 # CUSTOM CSS
 # ============================================================================
 st.markdown("""
@@ -537,15 +597,7 @@ st.markdown("""
 @st.cache_resource(show_spinner=True)
 def init_system():
     """Initialize or load the RAG system"""
-    # Check if vector store exists
     vectorstore = load_vectorstore()
-    
-    if vectorstore is None:
-        # Try to ingest if policies exist
-        if os.path.exists(POLICIES_PATH):
-            vectorstore, msg = ingest_policies(POLICIES_PATH, CHROMA_PATH)
-            if vectorstore is None:
-                return None, msg
     
     if vectorstore is None:
         return None, "No policy documents found. Please add markdown files to the policies folder."
@@ -593,6 +645,33 @@ with st.sidebar:
             pass
     else:
         st.error(f"⚠️ {init_message}")
+    
+    st.divider()
+    st.subheader("🔧 Maintenance")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Reset DB", help="Rebuild the vector database"):
+            try:
+                chroma_path = get_chroma_path()
+                if os.path.exists(chroma_path):
+                    shutil.rmtree(chroma_path, ignore_errors=True)
+                # Also clean any temp chroma dirs
+                for item in os.listdir(tempfile.gettempdir()):
+                    if item.startswith('kolrose_chroma_db'):
+                        try:
+                            shutil.rmtree(os.path.join(tempfile.gettempdir(), item), ignore_errors=True)
+                        except:
+                            pass
+            except:
+                pass
+            st.cache_resource.clear()
+            st.rerun()
+    
+    with col2:
+        if st.button("🗑️ Clear Cache", help="Clear all cached data"):
+            st.cache_resource.clear()
+            st.rerun()
     
     st.divider()
     st.caption("💰 Running on free infrastructure")
