@@ -64,18 +64,33 @@ def load_embeddings():
 
 @st.cache_resource(show_spinner=False)
 def load_vectorstore():
-    """Load or create vector store (cached across sessions)"""
-    from langchain_community.vectorstores import Chroma
+    """Load or create vector store"""
+    import shutil
     
-    embeddings = load_embeddings()
+    chroma_path = os.environ.get('CHROMA_PATH', './chroma_db')
     
-    if os.path.exists(CHROMA_PATH) and os.listdir(CHROMA_PATH):
+    # Check if chroma_db exists and is compatible
+    try:
+        from langchain_community.vectorstores import Chroma
+        
         return Chroma(
-            persist_directory=CHROMA_PATH,
-            embedding_function=embeddings,
-            collection_name=COLLECTION_NAME,
+            persist_directory=chroma_path,
+            embedding_function=load_embeddings(),
+            collection_name="kolrose_policies_v2",
         )
-    return None
+    except Exception as e:
+        # If loading fails, remove old DB and rebuild
+        st.warning(f"Rebuilding vector store...")
+        if os.path.exists(chroma_path):
+            shutil.rmtree(chroma_path)
+        
+        # Auto-ingest
+        from app.ingestion import ingest_policies
+        vectorstore, stats = ingest_policies(
+            policies_path=os.environ.get('POLICIES_PATH', './DATA/policies'),
+            chroma_path=chroma_path,
+        )
+        return vectorstore
 
 @st.cache_resource(show_spinner=False)
 def load_llm():
