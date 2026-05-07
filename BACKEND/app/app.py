@@ -21,6 +21,17 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 
+# DEBUG: Show what files are available
+import os
+st.write("Current directory:", os.getcwd())
+st.write("Files in current dir:", os.listdir("."))
+if os.path.exists("./policies"):
+    st.write("Policies folder:", os.listdir("./policies"))
+elif os.path.exists("./DATA/policies"):
+    st.write("DATA/policies folder:", os.listdir("./DATA/policies"))
+else:
+    st.write("No policies folder found!")
+
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
