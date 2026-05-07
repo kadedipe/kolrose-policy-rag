@@ -1,0 +1,131 @@
+{
+  "timestamp": "2026-05-07T00:45:05.299403",
+  "questions": 10,
+  "avg_retrieval_score": 0.967,
+  "avg_latency_ms": 698.0,
+  "min_latency_ms": 74.0,
+  "max_latency_ms": 5635.0,
+  "results": [
+    {
+      "id": "Q01",
+      "question": "What is the annual leave entitlement?",
+      "keywords_found": [
+        "15",
+        "working days",
+        "annual leave"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 5635.0
+    },
+    {
+      "id": "Q02",
+      "question": "How many sick leave days per year?",
+      "keywords_found": [
+        "12",
+        "working days",
+        "sick"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 85.0
+    },
+    {
+      "id": "Q03",
+      "question": "What is the maternity leave policy?",
+      "keywords_found": [
+        "16 weeks",
+        "maternity",
+        "full pay"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 131.0
+    },
+    {
+      "id": "Q04",
+      "question": "Where is Kolrose Limited located?",
+      "keywords_found": [
+        "Abuja",
+        "Bataiya Plaza",
+        "FCT"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 150.0
+    },
+    {
+      "id": "Q05",
+      "question": "How many remote work days per week?",
+      "keywords_found": [
+        "2 days",
+        "hybrid",
+        "remote"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 143.0
+    },
+    {
+      "id": "Q06",
+      "question": "What are password requirements?",
+      "keywords_found": [
+        "12 characters",
+        "uppercase",
+        "special"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 261.0
+    },
+    {
+      "id": "Q07",
+      "question": "How to report security incident?",
+      "keywords_found": [
+        "IT Security",
+        "Hotline",
+        "0800"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 74.0
+    },
+    {
+      "id": "Q08",
+      "question": "Maximum hotel rate in Abuja?",
+      "keywords_found": [
+        "Abuja",
+        "hotel"
+      ],
+      "keywords_missing": [
+        "35000"
+      ],
+      "retrieval_score": 0.667,
+      "latency_ms": 269.0
+    },
+    {
+      "id": "Q09",
+      "question": "What expenses are not reimbursable?",
+      "keywords_found": [
+        "fines",
+        "penalties",
+        "entertainment"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 121.0
+    },
+    {
+      "id": "Q10",
+      "question": "Can I carry over unused vacation?",
+      "keywords_found": [
+        "5",
+        "carryover",
+        "March"
+      ],
+      "keywords_missing": [],
+      "retrieval_score": 1.0,
+      "latency_ms": 107.0
+    }
+  ]
+}
