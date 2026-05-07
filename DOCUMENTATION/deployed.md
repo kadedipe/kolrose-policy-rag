@@ -2,7 +2,7 @@
 The Kolrose Limited AI Policy Assistant is deployed and accessible at the following URL:
 
 🔗 Live Application Link
-https://kolrose-policy-rag.streamlit.app
+https://kolrose-policy-raggit-drzyjcy7u5qxcvtzterbzz.streamlit.app/
 
 Note: If you haven't deployed to Streamlit Cloud yet, follow the instructions in the README.md to deploy your app for free.
 
