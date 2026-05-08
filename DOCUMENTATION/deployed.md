@@ -1,77 +1,106 @@
-🚀 Deployed Application
+markdown
+# 🚀 Deployed Application
+
 The Kolrose Limited AI Policy Assistant is deployed and accessible at the following URL:
 
-🔗 Live Application Link
-https://kolrose-policy-raggit-drzyjcy7u5qxcvtzterbzz.streamlit.app/
+## 🔗 Live Application Link
+**https://kolrose-policy-rag-production.up.railway.app/**
 
-Note: If you haven't deployed to Streamlit Cloud yet, follow the instructions in the README.md to deploy your app for free.
+---
 
-📱 Accessing the Application
-Web Interface
+## 📱 Accessing the Application
+
+### Web Interface
 Open the link above in any modern browser to access the chat interface.
 
-API Endpoints
-The deployed version also exposes API endpoints:
+### Railway Dashboard
+Monitor your deployment at [railway.app](https://railway.app)
 
-Chat API: POST /chat
+---
 
-Health Check: GET /health
+## 🔄 Deployment Status
 
-Example API Call
-bash
-curl -X POST https://kolrose-policy-rag.streamlit.app/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What is the annual leave policy?","include_snippets":true}'
-🔄 Alternative Deployment Options
-If the primary deployment is unavailable, the application is also configured for:
+| Platform | Status | URL |
+|----------|--------|-----|
+| **Railway** | ✅ **Primary** | [kolrose-policy-rag-production.up.railway.app](https://kolrose-policy-rag-production.up.railway.app) |
+| Streamlit Cloud | 🔄 Backup | kolrose-policy-rag.streamlit.app |
+| Render | 🔄 Backup | kolrose-policy-rag.onrender.com |
 
-Platform	Status	Link
-Streamlit Cloud	Primary	kolrose-policy-rag.streamlit.app
-Render	Backup	kolrose-policy-rag.onrender.com
-Railway	Backup	kolrose-policy-rag.up.railway.app
-🏢 About Kolrose Limited
+---
+
+## 🏢 About Kolrose Limited
+
 📍 Suite 10, Bataiya Plaza, Area 2 Garki, Opposite FCDA, Abuja, FCT, Nigeria
 
-This RAG system answers employee questions about 12 company policy documents using:
+This RAG system answers employee questions about **12 company policy documents** using:
 
-LLM: OpenRouter (Google Gemini Flash - Free Tier)
+| Component | Technology | Cost |
+|-----------|-----------|------|
+| **LLM** | OpenRouter (Google Gemini Flash) | **Free** |
+| **Embeddings** | all-MiniLM-L6-v2 (Local) | **Free** |
+| **Vector DB** | ChromaDB (Local) | **Free** |
+| **Framework** | Streamlit | **Free** |
+| **Hosting** | Railway | **Free Tier** |
+| **Total Monthly Cost** | | **$0.00** |
 
-Embeddings: all-MiniLM-L6-v2 (Local, Free)
+---
 
-Vector DB: ChromaDB (Local, Free)
+## 📋 Policy Documents Covered
 
-Framework: Streamlit + FastAPI
+- KOL-HR-001: Employee Handbook
+- KOL-HR-002: Leave and Time-Off Policy
+- KOL-HR-003: Code of Conduct and Ethics
+- KOL-HR-005: Remote Work Policy
+- KOL-IT-001: IT Security Policy
+- KOL-FIN-001: Expenses and Reimbursement
+- KOL-HR-006: Performance Management
+- KOL-HR-007: Training and Development
+- KOL-ADMIN-001: Business Travel Policy
+- KOL-FIN-002: Procurement Policy
+- KOL-ADMIN-002: Health and Safety Policy
+- KOL-HR-008: Grievance and Dispute Resolution
 
-Total Monthly Cost: $0.00
+---
 
-Last deployed: 2024
+## 🔑 Environment Variables (Railway)
+
+| Variable | Value |
+|----------|-------|
+| `OPENROUTER_API_KEY` | `sk-or-v1-your-key-here` |
+
+---
+
+## 🚀 How to Redeploy
+
+1. **Push changes to GitHub:**
+   ```bash
+   git add .
+   git commit -m "Update app"
+   git push origin main
+Railway auto-deploys from the main branch
+
+Manual deploy (if needed):
+
+bash
+railway up
+📧 Contact
+For HR inquiries: hr@kolroselimited.com.ng
+
+For technical support: IT Support Desk
+
+Last deployed: May 7, 2026
 
 text
 
-### 📋 What to do if you haven't deployed yet
+---
 
-If you haven't deployed your app to Streamlit Cloud, follow these steps:
+## ✅ Key Updates Made
 
-1. **Push your code to GitHub**
-2. **Go to [streamlit.io/cloud](https://streamlit.io/cloud)**
-3. **Click "New app"**
-4. **Select your repository**
-5. **Set main file path:** `BACKEND/app/app.py`
-6. **Add your secret:** `OPENROUTER_API_KEY = "sk-or-v1-your-key"`
-7. **Click "Deploy!"**
+| Before | After |
+|--------|-------|
+| Streamlit Cloud as Primary | **Railway as Primary** |
+| Placeholder URL | **Actual Railway URL** |
+| Multiple deployment links | Clear Primary/Backup status |
+| Basic info | Added policy list, env vars, redeploy instructions |
 
-Once deployed, update the `deployed.md` file with your actual Streamlit Cloud URL (it will look like `https://your-username-your-repo.streamlit.app`).
-
-**If you only want to run locally and not deploy**, you can modify the file to say:
-
-```markdown
-# 🚀 Deployed Application
-
-The application is currently run locally. To start it:
-
-```bash
-git clone https://github.com/kolrose/policy-rag.git
-cd kolrose-policy-rag
-pip install -r requirements.txt
-streamlit run BACKEND/app/app.py
-See README.md for full setup instructions.
+Save this as `deployed.md` or update your `README.md` with this information!
