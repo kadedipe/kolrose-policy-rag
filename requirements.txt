@@ -18,7 +18,7 @@ chromadb>=0.5.0
 # Embeddings & ML
 sentence-transformers>=2.7.0
 torch>=2.0.0
-torchvision>=0.20.0
+torchvision
 
 # API & HTTP
 requests>=2.31.0
