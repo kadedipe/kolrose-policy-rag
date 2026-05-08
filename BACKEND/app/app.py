@@ -1,27 +1,23 @@
-# app.py - Kolrose Limited Policy RAG Assistant
 """
-Kolrose Limited - AI Policy Assistant
+Kolrose Limited - AI-Powered Policy Assistant
 Suite 10, Bataiya Plaza, Area 2 Garki, Opposite FCDA, Abuja, FCT, Nigeria
 
-A Retrieval-Augmented Generation (RAG) system for answering employee questions
-about company policies with accurate citations.
+A RAG system for answering employee questions about company policies.
+Uses OpenRouter API (free tier) + local embeddings for zero-cost operation.
 
-Run locally: streamlit run app.py
-Deploy to cloud: Push to GitHub → Deploy on Streamlit Cloud
+Deploy: Push to GitHub → Auto-deploy on Railway
 """
 
-import streamlit as st
 import os
-import sys
-import hashlib
-import time
 import re
+import time
 import shutil
 import tempfile
 from pathlib import Path
-from datetime import datetime
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass, field
+
+import streamlit as st
+import requests
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -34,164 +30,240 @@ st.set_page_config(
 )
 
 # ============================================================================
-# ENVIRONMENT SETUP
+# CONFIGURATION
 # ============================================================================
-# Try to load .env file, but use defaults if not available
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = "google/gemini-2.0-flash-001"  # Free on OpenRouter
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+COLLECTION_NAME = "kolrose_policies_v2"
+POLICIES_PATH = os.getenv("POLICIES_PATH", "./policies")
 
-# Determine the best writable path for ChromaDB
+
 def get_chroma_path():
-    """Get a writable path for ChromaDB based on environment"""
-    env_path = os.environ.get("CHROMA_PATH", "")
-    
-    # If explicitly set in environment, use it
+    """Get a writable path for ChromaDB"""
+    env_path = os.getenv("CHROMA_PATH", "")
     if env_path and env_path != "./chroma_db":
         return env_path
-    
-    # On Streamlit Cloud, use temp directory
-    if os.environ.get('STREAMLIT_SHARING_MODE') or os.environ.get('STREAMLIT_SERVER_ADDRESS'):
-        base = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
-    else:
-        base = "./chroma_db"
-    
-    # Ensure parent directory exists and is writable
-    parent = os.path.dirname(base) or '.'
-    if os.path.exists(parent) and not os.access(parent, os.W_OK):
-        base = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
-    
-    return base
+    if os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('RAILWAY_SERVICE_ID'):
+        return os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
+    return "./chroma_db"
 
-# Configuration with defaults for local/cloud deployment
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+
 CHROMA_PATH = get_chroma_path()
-COLLECTION_NAME = "kolrose_policies_v2"
-POLICIES_PATH = os.environ.get("POLICIES_PATH", "./policies")
 
-def check_environment():
-    """Check environment and return status"""
-    status = {
-        "streamlit_cloud": bool(os.environ.get('STREAMLIT_SHARING_MODE') or os.environ.get('STREAMLIT_SERVER_ADDRESS')),
-        "writable_temp": True,
-        "chroma_path": CHROMA_PATH,
-        "policies_exist": os.path.exists(POLICIES_PATH),
+# ============================================================================
+# CUSTOM CSS
+# ============================================================================
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #1a5276, #2e86c1);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    .main-header h1 { color: white; margin: 0; font-size: 2.5rem; }
+    .main-header p { color: #d4e6f1; margin: 10px 0 0 0; }
+    .answer-box {
+        background: linear-gradient(135deg, #f0f8ff, #e8f4f8);
+        padding: 25px;
+        border-radius: 15px;
+        border-left: 5px solid #1a5276;
+        margin: 20px 0;
+        font-size: 1.05rem;
+        line-height: 1.6;
+    }
+    .refusal-box {
+        background: linear-gradient(135deg, #fff8e1, #fff3cd);
+        padding: 25px;
+        border-radius: 15px;
+        border-left: 5px solid #ffc107;
+        margin: 20px 0;
+    }
+    .citation-tag {
+        display: inline-block;
+        background: #1a5276;
+        color: white;
+        padding: 3px 10px;
+        border-radius: 15px;
+        font-size: 0.8rem;
+        margin: 3px;
+    }
+    .source-card {
+        background: #f8f9fa;
+        padding: 12px;
+        border-radius: 8px;
+        margin: 8px 0;
+        border: 1px solid #dee2e6;
+    }
+    .footer {
+        text-align: center;
+        color: #999;
+        font-size: 0.8rem;
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+    }
+    .stButton>button {
+        background: linear-gradient(135deg, #1a5276, #2e86c1);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        transition: transform 0.2s;
+    }
+    .stButton>button:hover {
+        transform: scale(1.02);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def extract_document_id(content):
+    """Extract document ID from content"""
+    match = re.search(r'(KOL-[A-Z]+-\d+)', content)
+    return match.group(1) if match else None
+
+
+def get_document_title(filename):
+    """Get readable title from filename"""
+    name = Path(filename).stem
+    name = re.sub(r'^(KOL-[A-Z]+-\d+)[-_]?', '', name)
+    name = name.replace('-', ' ').replace('_', ' ').strip()
+    return name or filename
+
+
+# ============================================================================
+# TOPIC CLASSIFICATION (Guardrail)
+# ============================================================================
+
+class TopicClassifier:
+    """Classifies queries for guardrail enforcement"""
+    
+    CORPUS_TOPICS = {
+        'leave': ['leave', 'vacation', 'pto', 'sick day', 'maternity', 'paternity', 'time off'],
+        'remote_work': ['remote', 'work from home', 'wfh', 'hybrid', 'telecommuting'],
+        'security': ['password policy', 'vpn', 'mfa', 'multi-factor', 'authentication', 'security'],
+        'conduct': ['code of conduct', 'ethics', 'confidentiality', 'discipline', 'dress code'],
+        'expenses': ['expense', 'reimbursement', 'travel cost', 'per diem', 'allowance'],
+        'performance': ['performance', 'review', 'appraisal', 'pip', 'promotion', 'probation'],
+        'training': ['training', 'certification', 'development', 'mentorship'],
+        'travel': ['travel', 'flight', 'hotel', 'accommodation', 'transport'],
+        'procurement': ['procurement', 'purchase', 'vendor', 'supplier', 'tender'],
+        'health_safety': ['health', 'safety', 'emergency', 'fire', 'evacuation'],
+        'grievance': ['grievance', 'complaint', 'dispute', 'appeal'],
+        'benefits': ['benefit', 'insurance', 'pension', 'compensation', 'salary'],
+        'working_hours': ['working hours', 'overtime', 'work hours', 'office hours'],
     }
     
-    # Test writability
-    try:
-        test_path = os.path.join(tempfile.gettempdir(), '.streamlit_test')
-        with open(test_path, 'w') as f:
-            f.write('test')
-        os.remove(test_path)
-    except:
-        status["writable_temp"] = False
+    OFF_TOPIC = [
+        'restaurant', 'weather', 'sports', 'entertainment', 'movie', 'music',
+        'recipe', 'cooking', 'celebrity', 'crypto', 'election', 'politics',
+    ]
     
-    # Suggest chroma path
-    if status["streamlit_cloud"]:
-        status["suggested_chroma_path"] = os.path.join(tempfile.gettempdir(), 'kolrose_chroma_db')
+    SENSITIVE = {
+        'password_sharing': ['share password', 'give password', 'tell password'],
+        'corruption': ['bribe', 'kickback', 'corruption', 'fraudulent'],
+        'harassment': ['harass', 'bully', 'discriminate', 'hostile work'],
+    }
     
-    return status
+    @classmethod
+    def classify(cls, query):
+        query_lower = query.lower().strip()
+        
+        for topic, keywords in cls.SENSITIVE.items():
+            if any(kw in query_lower for kw in keywords):
+                return 'sensitive', 0.95, f"Sensitive: {topic}"
+        
+        if any(t in query_lower for t in cls.OFF_TOPIC):
+            return 'off_topic', 0.95, "Off-topic detected"
+        
+        for topic, keywords in cls.CORPUS_TOPICS.items():
+            if any(kw in query_lower for kw in keywords):
+                return 'in_corpus', 0.5, f"Matched: {topic}"
+        
+        return 'out_of_corpus', 0.7, "No matching policy topics"
+
 
 # ============================================================================
-# LAZY LOADING - Initialize heavy components only when needed
+# LAZY LOADING (Cached)
 # ============================================================================
+
 @st.cache_resource(show_spinner=False)
 def load_embeddings():
-    """Load embedding model (cached across sessions)"""
+    """Load embedding model"""
     from langchain_community.embeddings import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={'device': 'cpu'},  # Use CPU for compatibility
+        model_name=EMBEDDING_MODEL,
+        model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True, 'batch_size': 16},
     )
 
-def ensure_writable_path(path):
-    """Ensure a path is writable, return a writable alternative if not"""
-    # Create directory if it doesn't exist
-    try:
-        os.makedirs(path, exist_ok=True)
-    except:
-        pass
-    
-    # Test if writable
-    try:
-        test_file = os.path.join(path, ".write_test")
-        with open(test_file, 'w') as f:
-            f.write('test')
-        os.remove(test_file)
-        return path, True
-    except (IOError, OSError, PermissionError):
-        # Not writable, use temp directory
-        new_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
-        os.makedirs(new_path, exist_ok=True)
-        return new_path, False
+
+@st.cache_resource(show_spinner=False)
+def load_cross_encoder():
+    """Load cross-encoder for re-ranking"""
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
 
 @st.cache_resource(show_spinner=False)
 def load_vectorstore():
-    """Load or create vector store with Streamlit Cloud compatibility"""
+    """Load or create vector store"""
+    from langchain_community.document_loaders import TextLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import Chroma
+    
     chroma_path = get_chroma_path()
-    policies_path = os.environ.get('POLICIES_PATH', POLICIES_PATH)
+    policies_path = POLICIES_PATH
     
     # Handle reset flag
-    if os.environ.get('RESET_CHROMA') == 'true':
-        try:
-            if os.path.exists(chroma_path):
-                shutil.rmtree(chroma_path, ignore_errors=True)
-            # Also clean temp chroma dirs
-            for item in os.listdir(tempfile.gettempdir()):
-                if item.startswith('kolrose_chroma_db'):
-                    shutil.rmtree(os.path.join(tempfile.gettempdir(), item), ignore_errors=True)
-        except:
-            pass
+    if os.getenv('RESET_CHROMA') == 'true':
+        for path in [chroma_path] + [os.path.join(tempfile.gettempdir(), d) 
+                     for d in os.listdir(tempfile.gettempdir()) 
+                     if d.startswith('kolrose_chroma_db')]:
+            try:
+                if os.path.exists(path):
+                    shutil.rmtree(path, ignore_errors=True)
+            except:
+                pass
         st.cache_resource.clear()
     
-    # Try to load existing database
+    # Try loading existing
     if os.path.exists(chroma_path) and os.path.isdir(chroma_path):
         try:
-            # Verify it's writable before loading
-            chroma_path, is_writable = ensure_writable_path(chroma_path)
-            
-            from langchain_community.vectorstores import Chroma
             vs = Chroma(
                 persist_directory=chroma_path,
                 embedding_function=load_embeddings(),
                 collection_name=COLLECTION_NAME,
             )
-            count = vs._collection.count()
-            if count > 0:
+            if vs._collection.count() > 0:
                 return vs
-        except Exception as e:
-            # Database corrupted or locked, rebuild
+        except:
             try:
                 shutil.rmtree(chroma_path, ignore_errors=True)
             except:
                 pass
     
-    # Build new database
+    # Create new
     if not os.path.exists(policies_path):
-        st.warning(f"Policies directory not found: {policies_path}")
         return None
     
     all_files = []
     for root, dirs, files in os.walk(policies_path):
         for f in sorted(files):
-            if f.endswith('.md') and f != 'README.md':
+            if f.endswith(('.md', '.txt')):
                 all_files.append(os.path.join(root, f))
     
     if not all_files:
-        st.warning("No policy markdown files found")
         return None
     
-    st.info(f"📥 Indexing {len(all_files)} policy documents (this may take a minute)...")
-    
-    from langchain_community.document_loaders import TextLoader
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_community.vectorstores import Chroma
+    st.info(f"📥 Indexing {len(all_files)} policy documents...")
     
     documents = []
     for filepath in all_files:
@@ -200,6 +272,10 @@ def load_vectorstore():
             docs = loader.load()
             for doc in docs:
                 doc.metadata['source_file'] = os.path.basename(filepath)
+                doc.metadata['title'] = get_document_title(filepath)
+                doc_id = extract_document_id(doc.page_content)
+                if doc_id:
+                    doc.metadata['document_id'] = doc_id
             documents.extend(docs)
         except Exception as e:
             st.warning(f"Could not load {os.path.basename(filepath)}: {str(e)[:100]}")
@@ -215,30 +291,23 @@ def load_vectorstore():
     
     for i, chunk in enumerate(chunks):
         chunk.metadata['chunk_id'] = f"chunk_{i:05d}"
-        match = re.search(r'\*\*Document ID:\*\*\s*(KOL-\w+-\d+)', chunk.page_content)
-        if match:
-            chunk.metadata['document_id'] = match.group(1)
+        if 'document_id' not in chunk.metadata:
+            doc_id = extract_document_id(chunk.page_content)
+            if doc_id:
+                chunk.metadata['document_id'] = doc_id
     
-    embeddings = load_embeddings()
-    
-    # Create with retry logic for readonly errors
+    # Create with retry logic
     for attempt in range(5):
         try:
-            # Ensure clean writable directory
-            if attempt == 0:
-                chroma_path, _ = ensure_writable_path(chroma_path)
-            else:
-                # Use fresh temp directory on retry
+            if attempt > 0:
                 chroma_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
-            
-            # Remove existing if present
-            if os.path.exists(chroma_path):
-                shutil.rmtree(chroma_path, ignore_errors=True)
+                if os.path.exists(chroma_path):
+                    shutil.rmtree(chroma_path, ignore_errors=True)
             
             os.makedirs(chroma_path, exist_ok=True)
             
             vectorstore = Chroma.from_documents(
-                chunks, embeddings,
+                chunks, load_embeddings(),
                 persist_directory=chroma_path,
                 collection_name=COLLECTION_NAME,
             )
@@ -246,105 +315,29 @@ def load_vectorstore():
             return vectorstore
             
         except Exception as e:
-            error_msg = str(e).lower()
-            if "readonly" in error_msg or "read only" in error_msg:
-                # Force temp directory next attempt
-                chroma_path = os.path.join(tempfile.gettempdir(), f'kolrose_chroma_db_{int(time.time())}')
-            elif attempt < 4:
+            if attempt < 4:
                 st.warning(f"Attempt {attempt + 1} failed, retrying...")
             else:
-                st.error(f"Failed to create vector store after {attempt + 1} attempts: {str(e)[:200]}")
+                st.error(f"Failed after {attempt + 1} attempts: {str(e)[:200]}")
                 return None
     
     return None
 
-@st.cache_resource(show_spinner=False)
-def load_llm():
-    """Load LLM client (cached across sessions)"""
-    from langchain_openai import ChatOpenAI
-    
-    api_key = OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY", "")
-    
-    return ChatOpenAI(
-        base_url=OPENROUTER_BASE_URL,
-        api_key=api_key,
-        model=DEFAULT_MODEL,
-        temperature=0,
-        max_tokens=500,
-    )
-
-@st.cache_resource(show_spinner=False)
-def load_cross_encoder():
-    """Load cross-encoder for re-ranking"""
-    from sentence_transformers import CrossEncoder
-    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 # ============================================================================
-# RAG SYSTEM CLASSES (Self-contained, no Colab dependencies)
+# KOLROSE RAG SYSTEM
 # ============================================================================
-
-class TopicClassifier:
-    """Classifies user queries for guardrail enforcement"""
-    
-    CORPUS_TOPICS = {
-        'leave': ['leave', 'vacation', 'pto', 'sick day', 'maternity', 'paternity', 'time off'],
-        'remote_work': ['remote', 'work from home', 'wfh', 'hybrid', 'telecommuting'],
-        'security': ['password policy', 'vpn', 'mfa', 'multi-factor', 'authentication'],
-        'conduct': ['code of conduct', 'ethics', 'confidentiality', 'discipline'],
-        'expenses': ['expense', 'reimbursement', 'travel cost', 'per diem', 'allowance'],
-        'performance': ['performance', 'review', 'appraisal', 'pip', 'promotion'],
-        'training': ['training', 'certification', 'development', 'mentorship'],
-        'travel': ['travel', 'flight', 'hotel', 'accommodation', 'transport'],
-        'procurement': ['procurement', 'purchase', 'vendor', 'supplier', 'tender'],
-        'health_safety': ['health', 'safety', 'emergency', 'fire', 'evacuation'],
-        'grievance': ['grievance', 'complaint', 'dispute', 'appeal'],
-        'company_info': ['kolrose', 'abuja', 'bataiya plaza', 'headquarters'],
-    }
-    
-    OFF_TOPIC = [
-        'restaurant', 'weather', 'sports', 'entertainment', 'movie', 'music',
-        'recipe', 'cooking', 'celebrity', 'crypto', 'election', 'politics',
-    ]
-    
-    SENSITIVE = {
-        'password_sharing': ['share password', 'give password', 'tell password',
-                           'share my password', 'give my password'],
-        'corruption': ['bribe', 'kickback', 'corruption', 'fraudulent'],
-        'harassment': ['harass', 'bully', 'discriminate', 'hostile work'],
-    }
-    
-    @classmethod
-    def classify(cls, query: str) -> Tuple[str, float, str]:
-        query_lower = query.lower().strip()
-        
-        # Check sensitive
-        for topic, keywords in cls.SENSITIVE.items():
-            if any(kw in query_lower for kw in keywords):
-                return 'sensitive', 0.95, f"Sensitive: {topic}"
-        
-        # Check off-topic
-        if any(t in query_lower for t in cls.OFF_TOPIC):
-            return 'off_topic', 0.95, "Off-topic detected"
-        
-        # Check in-corpus
-        for topic, keywords in cls.CORPUS_TOPICS.items():
-            if any(kw in query_lower for kw in keywords):
-                return 'in_corpus', 0.5, f"Matched: {topic}"
-        
-        return 'out_of_corpus', 0.7, "No matching policy topics"
-
 
 class KolroseRAG:
-    """Main RAG system for Kolrose policy queries"""
+    """RAG system for Kolrose policy queries"""
     
-    def __init__(self, vectorstore, llm):
+    def __init__(self, vectorstore):
         self.vectorstore = vectorstore
-        self.llm = llm
         self.cross_encoder = load_cross_encoder()
         self.collection = vectorstore._collection
     
-    def retrieve(self, query: str, k: int = 20) -> List[Dict]:
-        """Retrieve relevant document chunks"""
+    def retrieve(self, query, k=20):
+        """Retrieve relevant chunks"""
         embeddings = load_embeddings()
         query_embedding = embeddings.embed_query(query)
         
@@ -363,8 +356,8 @@ class KolroseRAG:
             })
         return docs
     
-    def rerank(self, query: str, candidates: List[Dict], top_n: int = 5) -> List[Dict]:
-        """Re-rank candidates using cross-encoder"""
+    def rerank(self, query, candidates, top_n=5):
+        """Re-rank with cross-encoder"""
         if not candidates:
             return []
         
@@ -374,76 +367,69 @@ class KolroseRAG:
         for i, doc in enumerate(candidates):
             doc['ce_score'] = float(scores[i])
         
-        reranked = sorted(candidates, key=lambda x: x['ce_score'], reverse=True)
-        return reranked[:top_n]
+        return sorted(candidates, key=lambda x: x['ce_score'], reverse=True)[:top_n]
     
-    def format_context(self, docs: List[Dict]) -> str:
-        """Format documents for LLM context with citations"""
+    def format_context(self, docs):
+        """Format documents for LLM context"""
         parts = []
         for i, doc in enumerate(docs):
             meta = doc['metadata']
             doc_id = meta.get('document_id', f'DOC-{i+1}')
             source = meta.get('source_file', 'Unknown')
-            section = meta.get('section') or meta.get('h2', '')
-            
             header = f"[{doc_id}] {source}"
-            if section:
-                header += f" — {section}"
-            
             parts.append(f"--- {header} ---\n{doc['content']}")
-        
         return "\n\n".join(parts)
     
-    def query(self, question: str) -> Dict:
-        """Execute a full RAG query with guardrails"""
+    def query(self, question):
+        """Execute RAG query with guardrails"""
         start_time = time.time()
         
-        # Guardrail: Topic classification
+        # Topic classification
         category, confidence, reason = TopicClassifier.classify(question)
         
         if category in ['off_topic', 'out_of_corpus']:
             return {
-                'answer': f"🚫 I can only answer questions about Kolrose Limited policies. Try asking about leave, remote work, security, expenses, or other HR topics.",
-                'sources': [],
-                'citations': [],
-                'refused': True,
-                'category': category,
+                'answer': "🚫 I can only answer questions about Kolrose Limited policies. "
+                         "Try asking about leave, remote work, security, expenses, or other HR topics.",
+                'sources': [], 'citations': [], 'refused': True, 'category': category,
                 'metrics': {'total_ms': round((time.time() - start_time) * 1000)},
             }
         
         if category == 'sensitive':
             return {
-                'answer': f"⚠️ For sensitive matters, please contact the Compliance Officer at compliance@kolroselimited.com.ng or use the Whistleblower Hotline: 0800-KOLROSE.",
+                'answer': "⚠️ For sensitive matters, please contact the Compliance Officer at "
+                         "compliance@kolroselimited.com.ng or the Whistleblower Hotline: 0800-KOLROSE.",
                 'sources': [{'document_id': 'KOL-HR-003', 'policy_name': 'Code of Conduct'}],
-                'citations': ['KOL-HR-003'],
-                'refused': True,
-                'category': category,
+                'citations': ['KOL-HR-003'], 'refused': True, 'category': category,
                 'metrics': {'total_ms': round((time.time() - start_time) * 1000)},
             }
         
-        # Retrieve
+        # Retrieve and re-rank
         candidates = self.retrieve(question, k=20)
-        
-        # Re-rank
         docs = self.rerank(question, candidates, top_n=5)
+        context = self.format_context(docs)
         
         # Build prompt
-        context = self.format_context(docs)
-        prompt = f"""🏢 Kolrose Limited — HR Policy Assistant
-📍 Suite 10, Bataiya Plaza, Area 2 Garki, Abuja, FCT, Nigeria
+        prompt = f"""You are the official Kolrose Limited Policy Assistant. 
+Your job is to answer employee questions accurately based ONLY on the provided policy documents.
+📍 Suite 10, Bataiya Plaza, Area 2 Garki, Opposite FCDA, Abuja, FCT, Nigeria
 
-Answer based ONLY on these policy documents. Cite EVERY claim: [Document ID, Section].
+Rules:
+1. Answer ONLY from the provided context
+2. If info isn't in the context, say so and direct to HR
+3. Cite specific document IDs and sections
+4. Be concise but thorough
+5. Use bullet points for multiple rules/conditions
 
-Documents:
+Context from Kolrose Policy Documents:
 {context}
 
-Question: {question}
+Employee Question: {question}
 
-Answer:"""
+Policy Answer:"""
         
-        # Generate (using OpenRouter API directly for compatibility)
-        import requests
-        api_key = OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY", "")
+        # Generate via OpenRouter API
+        api_key = OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")
         
         response = requests.post(
             f"{OPENROUTER_BASE_URL}/chat/completions",
@@ -456,7 +442,7 @@ Answer:"""
                 "model": DEFAULT_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0,
-                "max_tokens": 500,
+                "max_tokens": 800,
             },
             timeout=30,
         )
@@ -464,9 +450,9 @@ Answer:"""
         if response.status_code == 200:
             answer = response.json()['choices'][0]['message']['content']
         else:
-            answer = f"Error generating response. Please try again. (Status: {response.status_code})"
+            answer = f"Error generating response (Status: {response.status_code}). Please try again."
         
-        # Extract sources and citations
+        # Extract sources
         sources = []
         seen = set()
         for doc in docs:
@@ -476,9 +462,8 @@ Answer:"""
                 seen.add(doc_id)
                 sources.append({
                     'document_id': doc_id,
-                    'policy_name': meta.get('policy_name', 'Unknown'),
+                    'policy_name': meta.get('title', 'Unknown'),
                     'source_file': meta.get('source_file', 'Unknown'),
-                    'section': meta.get('section') or meta.get('h2', 'N/A'),
                 })
         
         citations = list(set(re.findall(r'\[?KOL-\w+-\d+\]?', answer)))
@@ -498,86 +483,18 @@ Answer:"""
 
 
 # ============================================================================
-# CUSTOM CSS
+# INITIALIZATION
 # ============================================================================
-st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(135deg, #1a5276, #2e86c1);
-        color: white;
-        padding: 30px;
-        border-radius: 15px;
-        text-align: center;
-        margin-bottom: 30px;
-    }
-    .main-header h1 { color: white; margin: 0; font-size: 2.5rem; }
-    .main-header p { color: #d4e6f1; margin: 10px 0 0 0; }
+
+@st.cache_resource(show_spinner=True)
+def init_system():
+    """Initialize the RAG system"""
+    vectorstore = load_vectorstore()
+    if vectorstore is None:
+        return None, "No policy documents found. Please add files to the policies folder."
     
-    .answer-box {
-        background: linear-gradient(135deg, #f0f8ff, #e8f4f8);
-        padding: 25px;
-        border-radius: 15px;
-        border-left: 5px solid #1a5276;
-        margin: 20px 0;
-        font-size: 1.05rem;
-    }
-    
-    .refusal-box {
-        background: linear-gradient(135deg, #fff8e1, #fff3cd);
-        padding: 25px;
-        border-radius: 15px;
-        border-left: 5px solid #ffc107;
-        margin: 20px 0;
-    }
-    
-    .citation-tag {
-        display: inline-block;
-        background: #1a5276;
-        color: white;
-        padding: 3px 10px;
-        border-radius: 15px;
-        font-size: 0.8rem;
-        margin: 3px;
-    }
-    
-    .source-card {
-        background: #f8f9fa;
-        padding: 12px;
-        border-radius: 8px;
-        margin: 8px 0;
-        border: 1px solid #dee2e6;
-    }
-    
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #1a5276;
-    }
-    
-    .footer {
-        text-align: center;
-        color: #999;
-        font-size: 0.8rem;
-        margin-top: 40px;
-        padding-top: 20px;
-        border-top: 1px solid #eee;
-    }
-    
-    .stButton>button {
-        background: linear-gradient(135deg, #1a5276, #2e86c1);
-        color: white;
-        border: none;
-        padding: 12px 30px;
-        font-size: 1.1rem;
-        border-radius: 10px;
-        transition: transform 0.2s;
-    }
-    .stButton>button:hover {
-        transform: scale(1.02);
-        background: linear-gradient(135deg, #2e86c1, #1a5276);
-    }
-</style>
-""", unsafe_allow_html=True)
+    rag = KolroseRAG(vectorstore)
+    return rag, "System ready"
 
 
 # ============================================================================
@@ -593,19 +510,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Initialize system
-@st.cache_resource(show_spinner=True)
-def init_system():
-    """Initialize or load the RAG system"""
-    vectorstore = load_vectorstore()
-    
-    if vectorstore is None:
-        return None, "No policy documents found. Please add markdown files to the policies folder."
-    
-    llm = load_llm()
-    rag = KolroseRAG(vectorstore, llm)
-    return rag, "System ready"
-
 # Load system
 with st.spinner("🔄 Initializing Policy Assistant..."):
     rag_system, init_message = init_system()
@@ -614,7 +518,6 @@ with st.spinner("🔄 Initializing Policy Assistant..."):
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # API Key input
     api_key = st.text_input(
         "OpenRouter API Key",
         value=OPENROUTER_API_KEY,
@@ -626,15 +529,7 @@ with st.sidebar:
     
     st.divider()
     
-    # Retrieval settings
-    st.subheader("📊 Retrieval")
-    k_retrieve = st.slider("Initial candidates", 10, 30, 20)
-    k_final = st.slider("Final results", 3, 10, 5)
-    use_rerank = st.checkbox("Cross-encoder re-ranking", value=True)
-    
-    st.divider()
-    
-    # System status
+    # Status
     st.subheader("📊 System Status")
     if rag_system:
         st.success("✅ System Ready")
@@ -649,40 +544,29 @@ with st.sidebar:
     st.divider()
     st.subheader("🔧 Maintenance")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔄 Reset DB", help="Rebuild the vector database"):
+    if st.button("🔄 Reset Database", help="Rebuild the vector database"):
+        chroma_path = get_chroma_path()
+        for path in [chroma_path] + [os.path.join(tempfile.gettempdir(), d) 
+                     for d in os.listdir(tempfile.gettempdir()) 
+                     if d.startswith('kolrose_chroma_db')]:
             try:
-                chroma_path = get_chroma_path()
-                if os.path.exists(chroma_path):
-                    shutil.rmtree(chroma_path, ignore_errors=True)
-                # Also clean any temp chroma dirs
-                for item in os.listdir(tempfile.gettempdir()):
-                    if item.startswith('kolrose_chroma_db'):
-                        try:
-                            shutil.rmtree(os.path.join(tempfile.gettempdir(), item), ignore_errors=True)
-                        except:
-                            pass
+                if os.path.exists(path):
+                    shutil.rmtree(path, ignore_errors=True)
             except:
                 pass
-            st.cache_resource.clear()
-            st.rerun()
-    
-    with col2:
-        if st.button("🗑️ Clear Cache", help="Clear all cached data"):
-            st.cache_resource.clear()
-            st.rerun()
+        st.cache_resource.clear()
+        st.rerun()
     
     st.divider()
     st.caption("💰 Running on free infrastructure")
     st.caption("📍 Kolrose Limited, Abuja, Nigeria")
 
-# Main content
+# Main tabs
 tab1, tab2, tab3 = st.tabs(["💬 Ask Questions", "📚 Policy Browser", "ℹ️ About"])
 
 with tab1:
     # Example queries
-    with st.expander("💡 Example Questions"):
+    with st.expander("💡 Example Questions", expanded=False):
         cols = st.columns(3)
         examples = [
             "What is the annual leave entitlement?",
@@ -690,44 +574,36 @@ with tab1:
             "What are the password requirements?",
             "How are travel expenses reimbursed?",
             "What training budget is available?",
-            "Where is Kolrose Limited located?",
+            "What is the dress code policy?",
         ]
         for i, ex in enumerate(examples):
             if cols[i % 3].button(ex, key=f"ex_{i}", use_container_width=True):
                 st.session_state['question'] = ex
     
-    # Question input
     question = st.text_area(
         "Ask a policy question:",
         value=st.session_state.get('question', ''),
         placeholder="e.g., What is the annual leave policy for new employees?",
-        height=100,
-        key="question_input",
+        height=80,
     )
     
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        ask_clicked = st.button("🔍 Ask", type="primary", use_container_width=True)
-    
-    if ask_clicked and question and rag_system:
+    if st.button("🔍 Ask", type="primary") and question and rag_system:
         with st.spinner("🔍 Searching policies..."):
             result = rag_system.query(question)
             
             if result['refused']:
-                st.markdown(f'<div class="refusal-box">⚠️ {result["answer"]}</div>', 
+                st.markdown(f'<div class="refusal-box">{result["answer"]}</div>', 
                            unsafe_allow_html=True)
             else:
-                # Answer
                 st.markdown("### 📋 Answer")
                 st.markdown(f'<div class="answer-box">{result["answer"]}</div>', 
                            unsafe_allow_html=True)
                 
                 # Metrics
                 m1, m2, m3, m4 = st.columns(4)
-                metrics = result['metrics']
-                m1.metric("⏱️ Response", f"{metrics['total_ms']}ms")
-                m2.metric("📚 Sources", metrics['num_sources'])
-                m3.metric("📝 Citations", metrics['num_citations'])
+                m1.metric("⏱️ Response", f"{result['metrics']['total_ms']}ms")
+                m2.metric("📚 Sources", result['metrics']['num_sources'])
+                m3.metric("📝 Citations", result['metrics']['num_citations'])
                 m4.metric("💰 Cost", "FREE")
                 
                 # Citations
@@ -746,40 +622,40 @@ with tab1:
                             st.markdown(f"""
                             <div class="source-card">
                                 <strong>[{s['document_id']}]</strong> {s['policy_name']}<br>
-                                <small>📁 Section: {s['section']} | 📄 {s['source_file']}</small>
+                                <small>📄 {s['source_file']}</small>
                             </div>
                             """, unsafe_allow_html=True)
     
-    elif ask_clicked and not rag_system:
+    elif not rag_system and 'question' in st.session_state:
         st.error("System not initialized. Check that policy files exist and API key is set.")
 
 with tab2:
     st.subheader("📚 Available Policy Documents")
     
     policies = [
-        ("KOL-HR-001", "Employee Handbook", "HR", 8),
-        ("KOL-HR-002", "Leave and Time-Off Policy", "HR", 10),
-        ("KOL-HR-003", "Code of Conduct and Ethics", "HR/Legal", 12),
-        ("KOL-HR-005", "Remote Work Policy", "HR", 10),
-        ("KOL-IT-001", "IT Security Policy", "IT", 14),
-        ("KOL-FIN-001", "Expenses and Reimbursement", "Finance", 12),
-        ("KOL-HR-006", "Performance Management", "HR", 12),
-        ("KOL-HR-007", "Training and Development", "HR", 10),
-        ("KOL-ADMIN-001", "Business Travel Policy", "Admin", 14),
-        ("KOL-FIN-002", "Procurement Policy", "Finance", 14),
-        ("KOL-ADMIN-002", "Health and Safety Policy", "Admin", 12),
-        ("KOL-HR-008", "Grievance and Dispute Resolution", "HR", 12),
+        ("KOL-HR-001", "Employee Handbook", "HR"),
+        ("KOL-HR-002", "Leave and Time-Off Policy", "HR"),
+        ("KOL-HR-003", "Code of Conduct and Ethics", "HR/Legal"),
+        ("KOL-HR-005", "Remote Work Policy", "HR"),
+        ("KOL-IT-001", "IT Security Policy", "IT"),
+        ("KOL-FIN-001", "Expenses and Reimbursement", "Finance"),
+        ("KOL-HR-006", "Performance Management", "HR"),
+        ("KOL-HR-007", "Training and Development", "HR"),
+        ("KOL-ADMIN-001", "Business Travel Policy", "Admin"),
+        ("KOL-FIN-002", "Procurement Policy", "Finance"),
+        ("KOL-ADMIN-002", "Health and Safety Policy", "Admin"),
+        ("KOL-HR-008", "Grievance and Dispute Resolution", "HR"),
     ]
     
     cols = st.columns(3)
-    for i, (doc_id, name, dept, pages) in enumerate(policies):
+    for i, (doc_id, name, dept) in enumerate(policies):
         with cols[i % 3]:
             st.markdown(f"""
             <div style="background:#f8f9fa; padding:15px; border-radius:10px; 
                         margin:10px 0; border-top:3px solid #1a5276;">
                 <strong style="color:#1a5276;">[{doc_id}]</strong><br>
                 <strong>{name}</strong><br>
-                <small>📁 {dept} | 📄 ~{pages} pages</small>
+                <small>📁 {dept}</small>
             </div>
             """, unsafe_allow_html=True)
 
@@ -788,40 +664,44 @@ with tab3:
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("""
+        st.markdown(f"""
         ### 🏢 Kolrose Limited
         **Address:** Suite 10, Bataiya Plaza, Area 2 Garki,  
         Opposite FCDA, Abuja, FCT, Nigeria
         
         ### 🔧 Technical Stack
         - **Framework:** LangChain + Streamlit
-        - **LLM:** OpenRouter (Free Tier)
-        - **Embeddings:** all-MiniLM-L6-v2 (Local)
+        - **LLM:** {DEFAULT_MODEL} (Free via OpenRouter)
+        - **Embeddings:** {EMBEDDING_MODEL} (Local)
         - **Vector DB:** ChromaDB
-        - **Chunking:** Header-aware semantic
-        - **Retrieval:** MMR + Cross-encoder
-        """)
-    
-    with col2:
-        st.markdown("""
+        - **Chunking:** Recursive character split
+        - **Retrieval:** MMR + Cross-encoder re-ranking
+        
         ### 🛡️ Guardrails
         - ✅ Corpus boundary detection
         - ✅ Mandatory citations
         - ✅ Sensitive topic handling
-        - ✅ Output length control
-        
+        """)
+    
+    with col2:
+        st.markdown("""
         ### 💰 Costs
-        - **LLM:** Free (OpenRouter)
+        - **LLM:** Free (OpenRouter free models)
         - **Embeddings:** Free (Local model)
         - **Vector DB:** Free (ChromaDB)
-        - **Hosting:** Free (Streamlit Cloud)
+        - **Hosting:** Railway/Streamlit Cloud
         - **Total:** $0/month
+        
+        ### 📧 Contact
+        For HR inquiries: hr@kolroselimited.com.ng
+        
+        For technical issues: IT support desk
         """)
 
 # Footer
 st.markdown("""
 <div class="footer">
     © 2024 Kolrose Limited | Suite 10, Bataiya Plaza, Abuja, FCT, Nigeria<br>
-    For HR inquiries: hr@kolroselimited.com.ng
+    For HR inquiries: <a href="mailto:hr@kolroselimited.com.ng">hr@kolroselimited.com.ng</a>
 </div>
 """, unsafe_allow_html=True)
