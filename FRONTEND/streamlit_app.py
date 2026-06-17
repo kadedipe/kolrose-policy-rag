@@ -1,41 +1,64 @@
 """
-Streamlit Cloud Entry Point (UI ONLY)
-====================================
-This file ONLY launches Streamlit UI.
-No FastAPI, no backend logic.
+STREAMLIT FRONTEND ONLY
+Connects to FastAPI backend on Railway
 """
 
 import streamlit as st
+import requests
 
-# Optional logo
-COMPANY_LOGO_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
-  <rect width="200" height="200" rx="20" fill="#1a5276"/>
-  <text x="100" y="90" text-anchor="middle" fill="white" font-size="40">🏢</text>
-  <text x="100" y="130" text-anchor="middle" fill="#d4e6f1" font-size="16">Kolrose</text>
-  <text x="100" y="155" text-anchor="middle" fill="#d4e6f1" font-size="12">Limited</text>
-</svg>
-"""
+# =========================
+# CONFIG
+# =========================
+API_URL = "https://YOUR-RAILWAY-APP.up.railway.app"
 
-def main():
-    st.set_page_config(
-        page_title="Kolrose Policy Assistant",
-        page_icon="🏢",
-        layout="wide"
-    )
+st.set_page_config(
+    page_title="Kolrose Policy Assistant",
+    page_icon="🏢",
+    layout="wide"
+)
 
-    st.markdown("## 🏢 Kolrose Policy Assistant")
+# =========================
+# HEADER
+# =========================
+st.title("🏢 Kolrose Policy Assistant")
+st.caption("AI-powered company policy assistant (FastAPI backend + Streamlit frontend)")
 
-    st.markdown("Welcome! Connect this UI to your FastAPI backend.")
 
-    st.markdown("### 🔌 API Status")
-    st.info("Backend runs separately on Railway (FastAPI service)")
+# =========================
+# INPUT
+# =========================
+question = st.text_input("Ask a policy question")
 
-    # Simple UI placeholder
-    question = st.text_input("Ask a policy question")
+# =========================
+# ACTION
+# =========================
+if st.button("Ask"):
+    if not question.strip():
+        st.warning("Please enter a question")
+    else:
+        with st.spinner("Thinking..."):
+            try:
+                res = requests.post(
+                    f"{API_URL}/chat",
+                    json={"question": question}
+                )
 
-    if st.button("Ask"):
-        st.warning("Connect this to your FastAPI /chat endpoint")
+                if res.status_code == 200:
+                    data = res.json()
 
-if __name__ == "__main__":
-    main()
+                    st.markdown("### 📋 Answer")
+                    st.write(data.get("answer", "No answer returned"))
+
+                    if data.get("citations"):
+                        st.markdown("### 📚 Citations")
+                        st.write(data["citations"])
+
+                    if data.get("sources"):
+                        st.markdown("### 📄 Sources")
+                        st.write(data["sources"])
+
+                else:
+                    st.error(f"Backend error: {res.status_code}")
+
+            except Exception as e:
+                st.error(f"Connection error: {str(e)}")
