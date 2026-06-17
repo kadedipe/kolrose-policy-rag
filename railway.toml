@@ -1,4 +1,3 @@
-# railway.toml - Place in repository root
 [build]
 builder = "nixpacks"
 
@@ -8,4 +7,4 @@ SENTENCE_TRANSFORMERS_HOME = "/tmp/.cache"
 
 [deploy]
 rootDirectory = "/"
-startCommand = "streamlit run BACKEND/app/app.py --server.port=$PORT --server.address=0.0.0.0 --server.enableCORS=false --server.enableXsrfProtection=false"
+startCommand = "uvicorn BACKEND.app.api:app --host 0.0.0.0 --port $PORT"
