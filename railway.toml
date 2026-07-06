@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[variables]
+PYTHONPATH = "/app"
+HF_HUB_ENABLE_HF_TRANSFER = "1"
+SENTENCE_TRANSFORMERS_HOME = "/tmp/.cache"
+
+[deploy]
+startCommand = "uvicorn BACKEND.app.api:app --host 0.0.0.0 --port $PORT"
